@@ -35,7 +35,7 @@ public class WebhookEvent {
     private WebhookEventStatus status;
 
     @Column(name = "retry_count", nullable = false)
-    private int retryCount;
+    private Integer retryCount = 0;
 
     @Column(name = "last_error", columnDefinition = "TEXT")
     private String lastError;
@@ -45,6 +45,9 @@ public class WebhookEvent {
 
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    @Column(name = "published_at")
+    private LocalDateTime publishedAt;
 
     @PrePersist
     public void prePersist() {
@@ -56,6 +59,26 @@ public class WebhookEvent {
     @PreUpdate
     public void preUpdate() {
         this.updatedAt = LocalDateTime.now();
+    }
+
+    public void markPublished() {
+        this.status = WebhookEventStatus.PUBLISHED;
+        this.createdAt = LocalDateTime.now();
+        this.publishedAt = LocalDateTime.now();
+        this.lastError = null;
+        this.updatedAt=LocalDateTime.now();
+    }
+
+    public void recordPublishFailure(String errorMessage, int maxRetry) {
+        this.retryCount = this.retryCount + 1;
+        this.lastError = errorMessage;
+        this.updatedAt = LocalDateTime.now();
+
+        if (this.retryCount >= maxRetry) {
+            this.status = WebhookEventStatus.PUBLISH_FAILED;
+        } else {
+            this.status = WebhookEventStatus.PENDING_PUBLISH;
+        }
     }
 
     public Long getId() {
@@ -124,5 +147,12 @@ public class WebhookEvent {
 
     public LocalDateTime getUpdatedAt() {
         return updatedAt;
+    }
+    public LocalDateTime getPublishedAt() {
+        return publishedAt;
+    }
+
+    public void setPublishedAt(LocalDateTime publishedAt) {
+        this.publishedAt = publishedAt;
     }
 }
