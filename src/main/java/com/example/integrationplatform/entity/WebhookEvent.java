@@ -49,6 +49,77 @@ public class WebhookEvent {
     @Column(name = "published_at")
     private LocalDateTime publishedAt;
 
+    public void setUpdatedAt(LocalDateTime updatedAt) {
+        this.updatedAt = updatedAt;
+    }
+
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public void setRetryCount(Integer retryCount) {
+        this.retryCount = retryCount;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+
+    @Column(name = "processing_retry_count")
+    private Integer processingRetryCount = 0;
+
+    @Column(name = "processing_last_error")
+    private String processingLastError;
+
+    public Integer getProcessingRetryCount() {
+        return processingRetryCount;
+    }
+
+    public void setProcessingRetryCount(Integer processingRetryCount) {
+        this.processingRetryCount = processingRetryCount;
+    }
+
+    public String getProcessingLastError() {
+        return processingLastError;
+    }
+
+    public void setProcessingLastError(String processingLastError) {
+        this.processingLastError = processingLastError;
+    }
+
+    public LocalDateTime getProcessingStartedAt() {
+        return processingStartedAt;
+    }
+
+    public void setProcessingStartedAt(LocalDateTime processingStartedAt) {
+        this.processingStartedAt = processingStartedAt;
+    }
+
+    public LocalDateTime getProcessedAt() {
+        return processedAt;
+    }
+
+    public void setProcessedAt(LocalDateTime processedAt) {
+        this.processedAt = processedAt;
+    }
+
+    public String getDlqReason() {
+        return dlqReason;
+    }
+
+    public void setDlqReason(String dlqReason) {
+        this.dlqReason = dlqReason;
+    }
+
+    @Column(name = "processing_started_at")
+    private LocalDateTime processingStartedAt;
+
+    @Column(name = "processed_at")
+    private LocalDateTime processedAt;
+
+    @Column(name = "dlq_reason")
+    private String dlqReason;
+
     @PrePersist
     public void prePersist() {
         LocalDateTime now = LocalDateTime.now();
