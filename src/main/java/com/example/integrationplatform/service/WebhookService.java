@@ -8,6 +8,8 @@ import com.example.integrationplatform.repository.WebhookEventRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Optional;
+
 @Service
 public class WebhookService {
 
@@ -19,8 +21,18 @@ public class WebhookService {
 
     @Transactional
     public WebhookResponse receiveWebhook(WebhookRequest request) {
+        Optional<WebhookEvent> existingEvent =  webhookEventRepository.findBySourceAndEventId(
+                request.getSource(),
+                request.getEventId()
+        );
+        if (existingEvent.isPresent()) {
+            WebhookEvent event = existingEvent.get();
+            return WebhookResponse.duplicate(
+                    event.getEventId(),
+                    event.getStatus().name()
+            );
+        }
         WebhookEvent event = new WebhookEvent();
-
         event.setEventId(request.getEventId());
         event.setEventType(request.getEventType());
         event.setSource(request.getSource());
@@ -30,7 +42,7 @@ public class WebhookService {
 
         WebhookEvent savedEvent = webhookEventRepository.save(event);
 
-        return new WebhookResponse(
+        return  WebhookResponse.accepted(
                 savedEvent.getEventId(),
                 savedEvent.getStatus().name()
         );

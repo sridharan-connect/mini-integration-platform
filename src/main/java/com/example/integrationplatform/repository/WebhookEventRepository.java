@@ -16,4 +16,6 @@ public interface WebhookEventRepository extends JpaRepository<WebhookEvent, Long
     List<WebhookEvent> findTop50ByStatusOrderByCreatedAtAsc(WebhookEventStatus status);
 
     List<WebhookEvent> findTop50ByStatusOrderByPublishedAtAsc(WebhookEventStatus status);
+
+    Optional<WebhookEvent> findBySourceAndEventId(String source, String eventId);
 }
