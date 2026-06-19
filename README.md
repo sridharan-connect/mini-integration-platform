@@ -1,6 +1,6 @@
 # Mini Integration Platform
 
-A public backend portfolio project demonstrating reliable webhook ingestion, durable event persistence, outbox-based asynchronous publishing, retry handling, and failure tracking using Java, Spring Boot, and PostgreSQL.
+A public backend portfolio project demonstrating reliable webhook ingestion, durable event persistence, outbox-based asynchronous publishing, worker processing, retry handling, idempotency, DLQ handling, and failure tracking using Java, Spring Boot, and PostgreSQL.
 
 This project is inspired by integration and workflow automation platforms such as Zapier. The goal is to build backend patterns commonly used in integration-heavy systems: webhooks, async processing, retries, idempotency, DLQ, external API calls, and event-driven workflows.
 
@@ -8,7 +8,7 @@ This project is inspired by integration and workflow automation platforms such a
 
 Work in Progress.
 
-The project currently implements the first reliable ingestion and outbox-publishing flow.
+The project currently implements reliable webhook ingestion, durable event persistence, scheduled outbox publishing, worker-based processing, retry handling, DLQ handling, and receiver-level idempotency.
 
 ## Implemented So Far
 
@@ -16,6 +16,8 @@ The project currently implements the first reliable ingestion and outbox-publish
 * Request payload validation
 * Durable event persistence in PostgreSQL
 * Event status lifecycle
+* Receiver-level idempotency using source + eventId
+* Duplicate webhook detection with successful duplicate response
 * Scheduled outbox publisher
 * Retry count tracking
 * Failure reason tracking
@@ -39,6 +41,7 @@ External System
 Webhook Receiver API
       |
       | validate request
+      | check duplicate using source + eventId
       v
 PostgreSQL
       |
@@ -65,6 +68,24 @@ Mock External API / Business Processing
       | success
       v
 PROCESSED
+```
+
+```text
+Duplicate Event Flow:
+
+External System
+      |
+      | POST same source + same eventId
+      v
+Webhook Receiver API
+      |
+      | duplicate detected
+      v
+Return successful duplicate response
+      |
+      | no new DB row created
+      v
+Existing event status returned
 ```
 
 ```text
@@ -121,6 +142,31 @@ This project uses an outbox-style approach:
 
 This helps avoid event loss and makes failure recovery easier.
 
+## Why Receiver-Level Idempotency?
+
+External systems may retry webhook delivery due to network failures, timeout, or missing acknowledgements. Without idempotency, the same event can be stored and processed multiple times.
+
+This project prevents duplicate event persistence using:
+
+```text
+Idempotency key = source + eventId
+```
+
+If the same source and eventId are received again, the system returns a successful duplicate response with the existing event status instead of creating another row.
+
+Example duplicate response:
+
+```json
+{
+  "eventId": "evt_1011",
+  "status": "PROCESSED",
+  "message": "Duplicate event already received",
+  "duplicate": true
+}
+```
+
+This keeps webhook retries safe and prevents duplicate rows from entering the outbox pipeline.
+
 ## Event Status Lifecycle
 
 ```text
@@ -129,6 +175,14 @@ PENDING_PUBLISH
       | publish success
       v
 PUBLISHED
+      |
+      | worker picks event
+      v
+PROCESSING
+      |
+      | processing success
+      v
+PROCESSED
 ```
 
 ```text
@@ -143,23 +197,14 @@ PENDING_PUBLISH with retry_count incremented
 PUBLISH_FAILED
 ```
 
-Planned future lifecycle:
-
-```text
-PUBLISHED
-      |
-      v
-PROCESSING
-      |
-      | success
-      v
-PROCESSED
-```
-
 ```text
 PROCESSING
       |
-      | repeated processing failure
+      | processing failure
+      v
+PUBLISHED with processing_retry_count incremented
+      |
+      | max retry reached
       v
 DLQ
 ```
@@ -177,8 +222,9 @@ Planned additions:
 
 * Kafka
 * Redis
-* Idempotency store
+* Business-level idempotency
 * DLQ table
+* Manual retry API for failed events
 * External API integration
 * OAuth flow
 * Observability with logs, metrics, and traces
@@ -211,7 +257,7 @@ The outbox publisher runs on a schedule and picks events with:
 status = PENDING_PUBLISH
 ```
 
-Processing rules:
+Publishing rules:
 
 * Fetch pending events in batches
 * Publish one event at a time through publisher layer
@@ -220,6 +266,41 @@ Processing rules:
 * Store last error message
 * Mark event as PUBLISH_FAILED after max retry attempts
 * Ignore PUBLISH_FAILED events in normal scheduler flow
+
+## Current Worker Processing Behavior
+
+The worker processor runs on a schedule and picks events with:
+
+```text
+status = PUBLISHED
+```
+
+Processing rules:
+
+* Fetch published events in batches
+* Mark event as PROCESSING before processing starts
+* Process event through mock external API layer
+* Mark event as PROCESSED on success
+* Increment processing retry count on failure
+* Store processing error message
+* Move event to DLQ after repeated processing failures
+* Ignore DLQ events in normal worker flow
+
+## Current Idempotency Behavior
+
+The webhook receiver checks whether an event already exists using:
+
+```text
+source + eventId
+```
+
+If the event already exists:
+
+* No new row is created
+* Existing event status is returned
+* API returns a successful duplicate response
+* The event is not published again
+* The event is not processed again through duplicate webhook ingestion
 
 ## Design Decisions
 
@@ -239,18 +320,25 @@ Each event has a clear status so failures can be debugged and retried safely.
 
 Failures are not silently ignored. Retry count and last error are stored.
 
-### 5. Stop after max retry
+### 5. Stop publishing after max retry
 
-After repeated failures, the event moves to PUBLISH_FAILED and is no longer picked by the normal scheduler.
+After repeated publishing failures, the event moves to PUBLISH_FAILED and is no longer picked by the normal publisher scheduler.
+
+### 6. Stop processing after max retry
+
+After repeated processing failures, the event moves to DLQ and is no longer picked by the normal worker scheduler.
+
+### 7. Handle duplicate webhooks safely
+
+Duplicate webhook events are identified using source + eventId and handled with a successful duplicate response instead of creating duplicate rows.
 
 ## Roadmap
 
-* Worker processing flow
-* Idempotency table
-* DLQ table
-* Manual retry API for failed events
+* Business-level idempotency for processing side effects
+* Manual retry API for failed or DLQ events
+* Stale PROCESSING recovery
 * Kafka producer integration
-* External mock API call
+* External real API integration
 * Webhook signature validation improvements
 * OAuth integration flow
 * Retry backoff using nextRetryAt
@@ -267,6 +355,7 @@ This project is built to demonstrate backend engineering concepts commonly used 
 * Async processing
 * Retry handling
 * Failure recovery
-* Idempotency
+* Receiver-level idempotency
+* Business-level idempotency design
 * DLQ design
 * Scalable backend service design
