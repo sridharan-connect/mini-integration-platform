@@ -22,6 +22,12 @@ The project currently implements the first reliable ingestion and outbox-publish
 * Published timestamp tracking
 * PUBLISH_FAILED state after max retry attempts
 * Mock publisher layer for Kafka-style asynchronous publishing
+* Worker processing flow
+* PUBLISHED -> PROCESSING -> PROCESSED lifecycle
+* Processing retry count tracking
+* Processing error tracking
+* DLQ handling after repeated processing failures
+* Mock external API processing layer
 
 ## High-Level Flow
 
@@ -47,8 +53,22 @@ Publisher Layer
       | success
       v
 PUBLISHED
+      |
+      | worker picks event
+      v
+Worker Processor
+      |
+      | mark event as PROCESSING
+      v
+Mock External API / Business Processing
+      |
+      | success
+      v
+PROCESSED
+```
 
-Failure Flow:
+```text
+Publish Failure Flow:
 
 PENDING_PUBLISH
       |
@@ -56,9 +76,35 @@ PENDING_PUBLISH
       v
 retry_count incremented
       |
+      | retry available
+      v
+PENDING_PUBLISH
+      |
       | max retry reached
       v
 PUBLISH_FAILED
+```
+
+```text
+Worker Processing Failure Flow:
+
+PUBLISHED
+      |
+      | worker picks event
+      v
+PROCESSING
+      |
+      | processing failure
+      v
+processing_retry_count incremented
+      |
+      | retry available
+      v
+PUBLISHED
+      |
+      | max retry reached
+      v
+DLQ
 ```
 
 ## Why Outbox Pattern?
