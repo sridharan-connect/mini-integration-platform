@@ -332,10 +332,29 @@ After repeated processing failures, the event moves to DLQ and is no longer pick
 
 Duplicate webhook events are identified using source + eventId and handled with a successful duplicate response instead of creating duplicate rows.
 
+### Manual Retry API
+
+Implemented a controlled manual retry endpoint for failed webhook events.
+
+Endpoint:
+
+`POST /api/v1/webhook-events/{id}/retry`
+
+Supported retry flows:
+
+- `PUBLISH_FAILED -> PENDING_PUBLISH`
+    - Allows the outbox publisher to publish the event again.
+    - Resets publish retry count and last publish error.
+
+- `DLQ -> PUBLISHED`
+    - Allows the worker processor to retry event processing.
+    - Resets processing retry count, processing error, DLQ reason, and processing timestamps.
+
+Invalid retry attempts such as `PROCESSED`, `PENDING_PUBLISH`, `PUBLISHED`, or `PROCESSING` return a conflict response.
+
 ## Roadmap
 
 * Business-level idempotency for processing side effects
-* Manual retry API for failed or DLQ events
 * Stale PROCESSING recovery
 * Kafka producer integration
 * External real API integration

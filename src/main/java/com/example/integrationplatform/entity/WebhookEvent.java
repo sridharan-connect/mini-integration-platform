@@ -49,67 +49,11 @@ public class WebhookEvent {
     @Column(name = "published_at")
     private LocalDateTime publishedAt;
 
-    public void setUpdatedAt(LocalDateTime updatedAt) {
-        this.updatedAt = updatedAt;
-    }
-
-    public void setCreatedAt(LocalDateTime createdAt) {
-        this.createdAt = createdAt;
-    }
-
-    public void setRetryCount(Integer retryCount) {
-        this.retryCount = retryCount;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
     @Column(name = "processing_retry_count")
     private Integer processingRetryCount = 0;
 
     @Column(name = "processing_last_error")
     private String processingLastError;
-
-    public Integer getProcessingRetryCount() {
-        return processingRetryCount;
-    }
-
-    public void setProcessingRetryCount(Integer processingRetryCount) {
-        this.processingRetryCount = processingRetryCount;
-    }
-
-    public String getProcessingLastError() {
-        return processingLastError;
-    }
-
-    public void setProcessingLastError(String processingLastError) {
-        this.processingLastError = processingLastError;
-    }
-
-    public LocalDateTime getProcessingStartedAt() {
-        return processingStartedAt;
-    }
-
-    public void setProcessingStartedAt(LocalDateTime processingStartedAt) {
-        this.processingStartedAt = processingStartedAt;
-    }
-
-    public LocalDateTime getProcessedAt() {
-        return processedAt;
-    }
-
-    public void setProcessedAt(LocalDateTime processedAt) {
-        this.processedAt = processedAt;
-    }
-
-    public String getDlqReason() {
-        return dlqReason;
-    }
-
-    public void setDlqReason(String dlqReason) {
-        this.dlqReason = dlqReason;
-    }
 
     @Column(name = "processing_started_at")
     private LocalDateTime processingStartedAt;
@@ -133,11 +77,12 @@ public class WebhookEvent {
     }
 
     public void markPublished() {
+        LocalDateTime now = LocalDateTime.now();
+
         this.status = WebhookEventStatus.PUBLISHED;
-        this.createdAt = LocalDateTime.now();
-        this.publishedAt = LocalDateTime.now();
+        this.publishedAt =now;
         this.lastError = null;
-        this.updatedAt=LocalDateTime.now();
+        this.updatedAt=now;
     }
 
     public void recordPublishFailure(String errorMessage, int maxRetry) {
@@ -152,6 +97,23 @@ public class WebhookEvent {
         }
     }
 
+    public void retryPublishing() {
+        this.status = WebhookEventStatus.PENDING_PUBLISH;
+        this.retryCount = 0;
+        this.lastError = null;
+        this.publishedAt = null;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public void retryProcessingFromDlq() {
+        this.status = WebhookEventStatus.PUBLISHED;
+        this.processingRetryCount = 0;
+        this.processingLastError = null;
+        this.dlqReason = null;
+        this.processingStartedAt = null;
+        this.processedAt = null;
+        this.updatedAt = LocalDateTime.now();
+    }
     public Long getId() {
         return id;
     }
@@ -225,5 +187,60 @@ public class WebhookEvent {
 
     public void setPublishedAt(LocalDateTime publishedAt) {
         this.publishedAt = publishedAt;
+    }
+
+    public void setUpdatedAt(LocalDateTime updatedAt) {
+        this.updatedAt = updatedAt;
+    }
+
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public void setRetryCount(Integer retryCount) {
+        this.retryCount = retryCount;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+    public Integer getProcessingRetryCount() {
+        return processingRetryCount;
+    }
+
+    public void setProcessingRetryCount(Integer processingRetryCount) {
+        this.processingRetryCount = processingRetryCount;
+    }
+
+    public String getProcessingLastError() {
+        return processingLastError;
+    }
+
+    public void setProcessingLastError(String processingLastError) {
+        this.processingLastError = processingLastError;
+    }
+
+    public LocalDateTime getProcessingStartedAt() {
+        return processingStartedAt;
+    }
+
+    public void setProcessingStartedAt(LocalDateTime processingStartedAt) {
+        this.processingStartedAt = processingStartedAt;
+    }
+
+    public LocalDateTime getProcessedAt() {
+        return processedAt;
+    }
+
+    public void setProcessedAt(LocalDateTime processedAt) {
+        this.processedAt = processedAt;
+    }
+
+    public String getDlqReason() {
+        return dlqReason;
+    }
+
+    public void setDlqReason(String dlqReason) {
+        this.dlqReason = dlqReason;
     }
 }
