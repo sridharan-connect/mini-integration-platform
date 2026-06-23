@@ -352,6 +352,19 @@ Supported retry flows:
 
 Invalid retry attempts such as `PROCESSED`, `PENDING_PUBLISH`, `PUBLISHED`, or `PROCESSING` return a conflict response.
 
+### Stale PROCESSING Recovery
+
+Implemented a scheduled recovery job for webhook events stuck in `PROCESSING`.
+
+If a worker crashes after marking an event as `PROCESSING`, the event can remain stuck forever. The recovery job identifies events where:
+
+- status = `PROCESSING`
+- processingStartedAt is older than the configured threshold
+
+The job increments the processing retry count and moves the event back to `PUBLISHED` so the worker can retry it. If the retry count exceeds the maximum limit, the event is moved to `DLQ`.
+
+Note: In a production system, processing-level idempotency or external API idempotency keys should be used to avoid duplicate side effects if the worker crashes after the external API succeeds but before marking the event as `PROCESSED`.
+
 ## Roadmap
 
 * Business-level idempotency for processing side effects

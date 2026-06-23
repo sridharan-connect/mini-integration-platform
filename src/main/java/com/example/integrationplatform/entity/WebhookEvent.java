@@ -114,6 +114,29 @@ public class WebhookEvent {
         this.processedAt = null;
         this.updatedAt = LocalDateTime.now();
     }
+
+    public void recoverStaleProcessing(int maxRetry) {
+        LocalDateTime now = LocalDateTime.now();
+
+        int currentRetryCount = this.processingRetryCount == null
+                ? 0
+                : this.processingRetryCount;
+
+        int nextRetryCount = currentRetryCount + 1;
+
+        this.processingRetryCount = nextRetryCount;
+        this.processingLastError = "Recovered from stale PROCESSING state";
+        this.processingStartedAt = null;
+        this.updatedAt = now;
+
+        if (nextRetryCount >= maxRetry) {
+            this.status = WebhookEventStatus.DLQ;
+            this.dlqReason = "Moved to DLQ after stale PROCESSING recovery exceeded max retries";
+        } else {
+            this.status = WebhookEventStatus.PUBLISHED;
+            this.dlqReason = null;
+        }
+    }
     public Long getId() {
         return id;
     }
