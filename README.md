@@ -1,35 +1,38 @@
 # Mini Integration Platform
 
-A public backend portfolio project demonstrating reliable webhook ingestion, durable event persistence, outbox-based asynchronous publishing, worker processing, retry handling, idempotency, DLQ handling, and failure tracking using Java, Spring Boot, and PostgreSQL.
+A backend portfolio project demonstrating reliable webhook ingestion, durable event persistence, outbox-style asynchronous processing, retries, idempotency, DLQ handling, stale-event recovery, and external API processing using Java, Spring Boot, and PostgreSQL.
 
-This project is inspired by integration and workflow automation platforms such as Zapier. The goal is to build backend patterns commonly used in integration-heavy systems: webhooks, async processing, retries, idempotency, DLQ, external API calls, and event-driven workflows.
+This project is inspired by integration and workflow automation platforms such as Zapier. The goal is to demonstrate backend patterns commonly used in integration-heavy systems: webhooks, async processing, retries, idempotency, failure recovery, and event-driven workflows.
 
 ## Current Status
 
 Work in Progress.
 
-The project currently implements reliable webhook ingestion, durable event persistence, scheduled outbox publishing, worker-based processing, retry handling, DLQ handling, and receiver-level idempotency.
-
-## Implemented So Far
+Implemented so far:
 
 * Webhook receiver API
-* Request payload validation
+* Request validation
 * Durable event persistence in PostgreSQL
-* Event status lifecycle
-* Receiver-level idempotency using source + eventId
-* Duplicate webhook detection with successful duplicate response
-* Scheduled outbox publisher
-* Retry count tracking
-* Failure reason tracking
-* Published timestamp tracking
-* PUBLISH_FAILED state after max retry attempts
-* Mock publisher layer for Kafka-style asynchronous publishing
-* Worker processing flow
-* PUBLISHED -> PROCESSING -> PROCESSED lifecycle
-* Processing retry count tracking
-* Processing error tracking
-* DLQ handling after repeated processing failures
+* Outbox-style scheduled publisher
+* Worker-based event processing
+* Receiver-level idempotency using `source + eventId`
+* Business-level idempotency for processing side effects
+* Retry handling for publish and processing failures
+* `PUBLISH_FAILED` handling after publish retry limit
+* `DLQ` handling after processing retry limit
+* Manual retry API for failed events
+* Stale `PROCESSING` recovery
+* Mock publisher layer
 * Mock external API processing layer
+
+## Tech Stack
+
+* Java
+* Spring Boot
+* PostgreSQL
+* Spring Data JPA
+* Scheduled background workers
+* Maven
 
 ## High-Level Flow
 
@@ -41,7 +44,7 @@ External System
 Webhook Receiver API
       |
       | validate request
-      | check duplicate using source + eventId
+      | receiver-level idempotency check
       v
 PostgreSQL
       |
@@ -49,123 +52,19 @@ PostgreSQL
       v
 Scheduled Outbox Publisher
       |
-      | publish event asynchronously
+      | publish event
       v
-Publisher Layer
-      |
-      | success
-      v
-PUBLISHED
-      |
-      | worker picks event
-      v
-Worker Processor
-      |
-      | mark event as PROCESSING
-      v
-Mock External API / Business Processing
-      |
-      | success
-      v
-PROCESSED
-```
-
-```text
-Duplicate Event Flow:
-
-External System
-      |
-      | POST same source + same eventId
-      v
-Webhook Receiver API
-      |
-      | duplicate detected
-      v
-Return successful duplicate response
-      |
-      | no new DB row created
-      v
-Existing event status returned
-```
-
-```text
-Publish Failure Flow:
-
-PENDING_PUBLISH
-      |
-      | publish failure
-      v
-retry_count incremented
-      |
-      | retry available
-      v
-PENDING_PUBLISH
-      |
-      | max retry reached
-      v
-PUBLISH_FAILED
-```
-
-```text
-Worker Processing Failure Flow:
-
 PUBLISHED
       |
       | worker picks event
       v
 PROCESSING
       |
-      | processing failure
+      | business idempotency check
+      | call mock external API
       v
-processing_retry_count incremented
-      |
-      | retry available
-      v
-PUBLISHED
-      |
-      | max retry reached
-      v
-DLQ
+PROCESSED
 ```
-
-## Why Outbox Pattern?
-
-Webhook APIs should respond quickly after safely accepting the event. Directly publishing to a queue or downstream system inside the webhook request can cause slow responses or event loss when the queue, network, or downstream service is unavailable.
-
-This project uses an outbox-style approach:
-
-1. Validate and persist the webhook event first.
-2. Return a successful response after durable persistence.
-3. Publish the event asynchronously using a scheduled publisher.
-4. Track retry count and failure reason.
-5. Stop automatic retries after the max retry limit.
-
-This helps avoid event loss and makes failure recovery easier.
-
-## Why Receiver-Level Idempotency?
-
-External systems may retry webhook delivery due to network failures, timeout, or missing acknowledgements. Without idempotency, the same event can be stored and processed multiple times.
-
-This project prevents duplicate event persistence using:
-
-```text
-Idempotency key = source + eventId
-```
-
-If the same source and eventId are received again, the system returns a successful duplicate response with the existing event status instead of creating another row.
-
-Example duplicate response:
-
-```json
-{
-  "eventId": "evt_1011",
-  "status": "PROCESSED",
-  "message": "Duplicate event already received",
-  "duplicate": true
-}
-```
-
-This keeps webhook retries safe and prevents duplicate rows from entering the outbox pipeline.
 
 ## Event Status Lifecycle
 
@@ -184,6 +83,8 @@ PROCESSING
       v
 PROCESSED
 ```
+
+Failure paths:
 
 ```text
 PENDING_PUBLISH
@@ -209,25 +110,118 @@ PUBLISHED with processing_retry_count incremented
 DLQ
 ```
 
-## Tech Stack
+## Idempotency
 
-* Java
-* Spring Boot
-* PostgreSQL
-* Spring Data JPA
-* Scheduler-based background processing
-* Maven
+This project implements two levels of idempotency.
 
-Planned additions:
+### 1. Receiver-Level Idempotency
 
-* Kafka
-* Redis
-* Business-level idempotency
-* DLQ table
-* Manual retry API for failed events
-* External API integration
-* OAuth flow
-* Observability with logs, metrics, and traces
+Receiver-level idempotency prevents duplicate webhook ingestion.
+
+Key:
+
+```text
+source + eventId
+```
+
+If the same source and eventId are received again:
+
+* No new webhook event row is created
+* Existing event status is returned
+* Duplicate response is returned successfully
+* Event is not published or processed again through duplicate ingestion
+
+Example duplicate response:
+
+```json
+{
+  "eventId": "evt_1001",
+  "status": "PROCESSED",
+  "message": "Duplicate event already received",
+  "duplicate": true
+}
+```
+
+### 2. Business-Level Idempotency
+
+Business-level idempotency prevents duplicate business side effects during worker processing.
+
+This protects cases where:
+
+```text
+1. Worker marks event as PROCESSING
+2. External API call succeeds
+3. Application crashes before marking event as PROCESSED
+4. Stale recovery moves event back to PUBLISHED
+5. Worker picks the event again
+```
+
+Without business idempotency, the external API could be called twice for the same business action.
+
+Current business idempotency key strategy:
+
+```text
+ORDER_CREATED:
+source + eventType + orderId
+
+ORDER_UPDATED:
+source + eventType + orderId + eventId
+```
+
+Examples:
+
+```text
+shopify:ORDER_CREATED:1001
+shopify:ORDER_UPDATED:1001:EVT-2001
+```
+
+This allows duplicate create actions for the same order to be skipped, while still allowing multiple valid update events for the same order.
+
+Key design point:
+
+```text
+Webhook event status controls workflow.
+Business idempotency controls duplicate side effects.
+```
+
+## Manual Retry API
+
+Manual retry is supported for failed webhook events.
+
+Endpoint:
+
+```http
+POST /api/v1/webhook-events/{id}/retry
+```
+
+Supported retry flows:
+
+```text
+PUBLISH_FAILED -> PENDING_PUBLISH
+DLQ            -> PUBLISHED
+```
+
+Invalid retry attempts for active or completed states such as `PENDING_PUBLISH`, `PUBLISHED`, `PROCESSING`, and `PROCESSED` return a conflict response.
+
+## Stale PROCESSING Recovery
+
+A scheduled recovery job handles webhook events stuck in `PROCESSING`.
+
+This can happen if the worker crashes after marking an event as `PROCESSING`, but before marking it as `PROCESSED`, `PUBLISHED`, or `DLQ`.
+
+Recovery condition:
+
+```text
+status = PROCESSING
+processingStartedAt < configured threshold
+```
+
+Recovery behavior:
+
+* If retry limit is not reached, event moves back to `PUBLISHED`
+* If retry limit is reached, event moves to `DLQ`
+
+Business-level idempotency helps prevent duplicate side effects when recovered events are processed again.
 
 ## Sample Webhook Request
 
@@ -238,156 +232,72 @@ Content-Type: application/json
 
 ```json
 {
-  "eventId": "evt_1001",
+  "eventId": "EVT-1001",
+  "source": "shopify",
   "eventType": "ORDER_CREATED",
-  "source": "SHOPIFY",
   "payload": {
-    "orderId": "ord_1001",
-    "amount": 1299,
-    "currency": "INR"
+    "orderId": "1001",
+    "customerId": "CUST-1",
+    "amount": 2500
   }
 }
 ```
 
-## Current Outbox Publishing Behavior
-
-The outbox publisher runs on a schedule and picks events with:
-
-```text
-status = PENDING_PUBLISH
-```
-
-Publishing rules:
-
-* Fetch pending events in batches
-* Publish one event at a time through publisher layer
-* Mark event as PUBLISHED on success
-* Increment retry count on failure
-* Store last error message
-* Mark event as PUBLISH_FAILED after max retry attempts
-* Ignore PUBLISH_FAILED events in normal scheduler flow
-
-## Current Worker Processing Behavior
-
-The worker processor runs on a schedule and picks events with:
-
-```text
-status = PUBLISHED
-```
-
-Processing rules:
-
-* Fetch published events in batches
-* Mark event as PROCESSING before processing starts
-* Process event through mock external API layer
-* Mark event as PROCESSED on success
-* Increment processing retry count on failure
-* Store processing error message
-* Move event to DLQ after repeated processing failures
-* Ignore DLQ events in normal worker flow
-
-## Current Idempotency Behavior
-
-The webhook receiver checks whether an event already exists using:
-
-```text
-source + eventId
-```
-
-If the event already exists:
-
-* No new row is created
-* Existing event status is returned
-* API returns a successful duplicate response
-* The event is not published again
-* The event is not processed again through duplicate webhook ingestion
-
 ## Design Decisions
 
-### 1. Persist before processing
+### Persist before processing
 
-The webhook API stores the event first before any async processing.
+The webhook API first stores the event durably before any asynchronous processing starts.
 
-### 2. Do not publish directly in request thread
+### Do not publish in the request thread
 
-Publishing directly inside the webhook API can increase latency and introduce failure coupling.
+Publishing directly inside the webhook request can increase latency and tightly couple the API to downstream failures.
 
-### 3. Use status-based lifecycle
+### Use status-based workflow
 
-Each event has a clear status so failures can be debugged and retried safely.
+Each event has a clear status, making failures easier to track, debug, and retry.
 
-### 4. Retry with failure tracking
+### Retry with failure tracking
 
-Failures are not silently ignored. Retry count and last error are stored.
+Publish and processing failures store retry count and last error message.
 
-### 5. Stop publishing after max retry
+### Stop automatic retry after max attempts
 
-After repeated publishing failures, the event moves to PUBLISH_FAILED and is no longer picked by the normal publisher scheduler.
+After max publish failures, events move to `PUBLISH_FAILED`.
+After max processing failures, events move to `DLQ`.
 
-### 6. Stop processing after max retry
+### Separate workflow status from business idempotency
 
-After repeated processing failures, the event moves to DLQ and is no longer picked by the normal worker scheduler.
-
-### 7. Handle duplicate webhooks safely
-
-Duplicate webhook events are identified using source + eventId and handled with a successful duplicate response instead of creating duplicate rows.
-
-### Manual Retry API
-
-Implemented a controlled manual retry endpoint for failed webhook events.
-
-Endpoint:
-
-`POST /api/v1/webhook-events/{id}/retry`
-
-Supported retry flows:
-
-- `PUBLISH_FAILED -> PENDING_PUBLISH`
-    - Allows the outbox publisher to publish the event again.
-    - Resets publish retry count and last publish error.
-
-- `DLQ -> PUBLISHED`
-    - Allows the worker processor to retry event processing.
-    - Resets processing retry count, processing error, DLQ reason, and processing timestamps.
-
-Invalid retry attempts such as `PROCESSED`, `PENDING_PUBLISH`, `PUBLISHED`, or `PROCESSING` return a conflict response.
-
-### Stale PROCESSING Recovery
-
-Implemented a scheduled recovery job for webhook events stuck in `PROCESSING`.
-
-If a worker crashes after marking an event as `PROCESSING`, the event can remain stuck forever. The recovery job identifies events where:
-
-- status = `PROCESSING`
-- processingStartedAt is older than the configured threshold
-
-The job increments the processing retry count and moves the event back to `PUBLISHED` so the worker can retry it. If the retry count exceeds the maximum limit, the event is moved to `DLQ`.
-
-Note: In a production system, processing-level idempotency or external API idempotency keys should be used to avoid duplicate side effects if the worker crashes after the external API succeeds but before marking the event as `PROCESSED`.
+Webhook event status controls the processing workflow.
+Business idempotency protects external side effects from duplicate execution.
 
 ## Roadmap
 
-* Business-level idempotency for processing side effects
-* Stale PROCESSING recovery
+Planned improvements:
+
 * Kafka producer integration
-* External real API integration
+* Retry backoff using `nextRetryAt`
+* Dedicated DLQ table
+* Real external API integration
 * Webhook signature validation improvements
 * OAuth integration flow
-* Retry backoff using nextRetryAt
+* Redis-based caching or locking exploration
 * Metrics and alerting
 * Architecture diagram
 
 ## Learning Focus
 
-This project is built to demonstrate backend engineering concepts commonly used in integration-platform and distributed-system roles:
+This project demonstrates backend engineering concepts commonly used in integration-platform and distributed-system roles:
 
 * Webhook ingestion
-* Event persistence
+* Durable event persistence
 * Outbox pattern
-* Async processing
+* Asynchronous processing
 * Retry handling
 * Failure recovery
 * Receiver-level idempotency
-* Business-level idempotency design
-* DLQ design
-* Scalable backend service design
+* Business-level idempotency
+* DLQ handling
+* Manual retry design
+* Stale-event recovery
+* External API processing safety

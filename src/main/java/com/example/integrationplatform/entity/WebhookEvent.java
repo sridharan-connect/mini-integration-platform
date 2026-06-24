@@ -85,6 +85,14 @@ public class WebhookEvent {
         this.updatedAt=now;
     }
 
+    public void markProcessed() {
+        this.status = WebhookEventStatus.PROCESSED;
+        this.processedAt = LocalDateTime.now();
+        this.processingLastError = null;
+        this.dlqReason = null;
+        this.updatedAt = LocalDateTime.now();
+    }
+
     public void recordPublishFailure(String errorMessage, int maxRetry) {
         this.retryCount = this.retryCount + 1;
         this.lastError = errorMessage;
