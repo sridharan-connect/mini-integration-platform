@@ -12,10 +12,10 @@ public class MockExternalApiService {
             LoggerFactory.getLogger(MockExternalApiService.class);
 
     public void process(WebhookEvent event) {
-        logger.info("Calling mock external API. eventId={}, eventType={}",
-                event.getEventId(),
-                event.getEventType());
-       // throw new RuntimeException("External API unavailable");
+//        logger.info("Calling mock external API. eventId={}, eventType={}",
+//                event.getEventId(),
+//                event.getEventType());
+        throw new RuntimeException("External API unavailable");
 
         // For now, success case.
         // Later we can throw exception here to test DLQ flow.

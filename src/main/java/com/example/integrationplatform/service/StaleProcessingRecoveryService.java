@@ -68,11 +68,12 @@ public class StaleProcessingRecoveryService {
             );
         } else {
             logger.warn(
-                    "Stale PROCESSING event recovered for retry. eventId={}, previousRetryCount={}, currentRetryCount={}, newStatus={}",
+                    "Stale PROCESSING event recovered for retry. eventId={}, previousRetryCount={}, currentRetryCount={}, newStatus={}, nextRetryAt={}",
                     savedEvent.getEventId(),
                     previousRetryCount,
                     savedEvent.getProcessingRetryCount(),
-                    savedEvent.getStatus()
+                    savedEvent.getStatus(),
+                    savedEvent.getNextRetryAt()
             );
         }
     }

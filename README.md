@@ -18,6 +18,7 @@ Implemented so far:
 * Receiver-level idempotency using `source + eventId`
 * Business-level idempotency for processing side effects
 * Retry handling for publish and processing failures
+* Retry backoff using `nextRetryAt`
 * `PUBLISH_FAILED` handling after publish retry limit
 * `DLQ` handling after processing retry limit
 * Manual retry API for failed events
@@ -91,7 +92,7 @@ PENDING_PUBLISH
       |
       | publish failure
       v
-PENDING_PUBLISH with retry_count incremented
+PENDING_PUBLISH with retry_count incremented and nextRetryAt set
       |
       | max retry reached
       v
@@ -103,7 +104,7 @@ PROCESSING
       |
       | processing failure
       v
-PUBLISHED with processing_retry_count incremented
+PUBLISHED with processing_retry_count incremented and nextRetryAt set
       |
       | max retry reached
       v
@@ -218,7 +219,7 @@ processingStartedAt < configured threshold
 
 Recovery behavior:
 
-* If retry limit is not reached, event moves back to `PUBLISHED`
+* If retry limit is not reached, event moves back to `PUBLISHED` with `nextRetryAt` set 
 * If retry limit is reached, event moves to `DLQ`
 
 Business-level idempotency helps prevent duplicate side effects when recovered events are processed again.
@@ -257,9 +258,11 @@ Publishing directly inside the webhook request can increase latency and tightly 
 
 Each event has a clear status, making failures easier to track, debug, and retry.
 
-### Retry with failure tracking
+### Retry with backoff and failure tracking
 
-Publish and processing failures store retry count and last error message.
+Publish and processing failures store retry count, last error message, and `nextRetryAt`.
+
+Failed events are not retried immediately on every scheduler run. They become eligible for retry only when `nextRetryAt` is reached.
 
 ### Stop automatic retry after max attempts
 
@@ -276,7 +279,6 @@ Business idempotency protects external side effects from duplicate execution.
 Planned improvements:
 
 * Kafka producer integration
-* Retry backoff using `nextRetryAt`
 * Dedicated DLQ table
 * Real external API integration
 * Webhook signature validation improvements
@@ -294,6 +296,7 @@ This project demonstrates backend engineering concepts commonly used in integrat
 * Outbox pattern
 * Asynchronous processing
 * Retry handling
+* Retry backoff using `nextRetryAt`
 * Failure recovery
 * Receiver-level idempotency
 * Business-level idempotency

@@ -8,8 +8,17 @@ import java.time.LocalDateTime;
 @Entity
 @Table(
         name = "webhook_events",
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uk_webhook_source_event_id",
+                        columnNames = {"source", "event_id"}
+                )
+        },
         indexes = {
-                @Index(name = "idx_webhook_status_created_at", columnList = "status, created_at")
+                @Index(name = "idx_webhook_status_created_at", columnList = "status, created_at"),
+                @Index(name = "idx_webhook_status_next_retry_created", columnList = "status, next_retry_at, created_at"),
+                @Index(name = "idx_webhook_status_next_retry_published", columnList = "status, next_retry_at, published_at"),
+                @Index(name = "idx_webhook_status_processing_started", columnList = "status, processing_started_at")
         }
 )
 public class WebhookEvent {
@@ -18,7 +27,7 @@ public class WebhookEvent {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "event_id", nullable = false, unique = true)
+    @Column(name = "event_id", nullable = false)
     private String eventId;
 
     @Column(name = "event_type", nullable = false)
@@ -64,6 +73,17 @@ public class WebhookEvent {
     @Column(name = "dlq_reason")
     private String dlqReason;
 
+    @Column(name = "next_retry_at")
+    private LocalDateTime nextRetryAt;
+
+    public LocalDateTime getNextRetryAt() {
+        return nextRetryAt;
+    }
+
+    public void setNextRetryAt(LocalDateTime nextRetryAt) {
+        this.nextRetryAt = nextRetryAt;
+    }
+
     @PrePersist
     public void prePersist() {
         LocalDateTime now = LocalDateTime.now();
@@ -82,6 +102,7 @@ public class WebhookEvent {
         this.status = WebhookEventStatus.PUBLISHED;
         this.publishedAt =now;
         this.lastError = null;
+        this.setNextRetryAt(null);
         this.updatedAt=now;
     }
 
@@ -90,6 +111,7 @@ public class WebhookEvent {
         this.processedAt = LocalDateTime.now();
         this.processingLastError = null;
         this.dlqReason = null;
+        this.setNextRetryAt(null);
         this.updatedAt = LocalDateTime.now();
     }
 
@@ -100,8 +122,10 @@ public class WebhookEvent {
 
         if (this.retryCount >= maxRetry) {
             this.status = WebhookEventStatus.PUBLISH_FAILED;
+            this.setNextRetryAt(null);
         } else {
             this.status = WebhookEventStatus.PENDING_PUBLISH;
+            this.setNextRetryAt(calculateNextRetryAt(this.retryCount));
         }
     }
 
@@ -110,6 +134,7 @@ public class WebhookEvent {
         this.retryCount = 0;
         this.lastError = null;
         this.publishedAt = null;
+        this.nextRetryAt = null;
         this.updatedAt = LocalDateTime.now();
     }
 
@@ -120,6 +145,7 @@ public class WebhookEvent {
         this.dlqReason = null;
         this.processingStartedAt = null;
         this.processedAt = null;
+        this.nextRetryAt = null;
         this.updatedAt = LocalDateTime.now();
     }
 
@@ -140,10 +166,26 @@ public class WebhookEvent {
         if (nextRetryCount >= maxRetry) {
             this.status = WebhookEventStatus.DLQ;
             this.dlqReason = "Moved to DLQ after stale PROCESSING recovery exceeded max retries";
+            this.nextRetryAt = null;
         } else {
             this.status = WebhookEventStatus.PUBLISHED;
             this.dlqReason = null;
+            this.nextRetryAt = calculateNextRetryAt(nextRetryCount);
         }
+    }
+
+    public LocalDateTime calculateNextRetryAt(int retryCount) {
+        int delayMinutes;
+
+        if (retryCount == 1) {
+            delayMinutes = 1;
+        } else if (retryCount == 2) {
+            delayMinutes = 5;
+        } else {
+            delayMinutes = 15;
+        }
+
+        return LocalDateTime.now().plusMinutes(delayMinutes);
     }
     public Long getId() {
         return id;
@@ -191,10 +233,6 @@ public class WebhookEvent {
 
     public int getRetryCount() {
         return retryCount;
-    }
-
-    public void setRetryCount(int retryCount) {
-        this.retryCount = retryCount;
     }
 
     public String getLastError() {

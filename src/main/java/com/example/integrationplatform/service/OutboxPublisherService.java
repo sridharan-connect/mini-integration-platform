@@ -5,9 +5,11 @@ import com.example.integrationplatform.enums.WebhookEventStatus;
 import com.example.integrationplatform.repository.WebhookEventRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -32,9 +34,8 @@ public class OutboxPublisherService {
     @Scheduled(fixedDelay = 5000)
     public void publishPendingEvents() {
           List<WebhookEvent> pendingEvents =
-                webhookEventRepository.findTop50ByStatusOrderByCreatedAtAsc(
-                        WebhookEventStatus.PENDING_PUBLISH
-                );
+                webhookEventRepository.findPublishableEvents(
+                        WebhookEventStatus.PENDING_PUBLISH, LocalDateTime.now(), PageRequest.of(0, 50));
 
         if (pendingEvents.isEmpty()) {
             return;
@@ -53,9 +54,10 @@ public class OutboxPublisherService {
             } catch (Exception ex) {
                 event.recordPublishFailure(ex.getMessage(), MAX_RETRY);
 
-                logger.error("Webhook event publish failed. eventId={}, retryCount={}, error={}",
+                logger.error("Webhook event publish failed. eventId={}, retryCount={}, nextRetryAt={}, error={}",
                         event.getEventId(),
                         event.getRetryCount(),
+                        event.getNextRetryAt(),
                         ex.getMessage());
             }
 

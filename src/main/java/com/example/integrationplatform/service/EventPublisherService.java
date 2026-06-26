@@ -14,7 +14,7 @@ public class EventPublisherService {
 
 
     public void publish(WebhookEvent event) {
-      //  throw new RuntimeException("Kafka unavailable");
+        //throw new RuntimeException("Kafka unavailable");
         logger.info("Publishing webhook event. eventId={}, eventType={}, source={}",
                 event.getEventId(),
                 event.getEventType(),

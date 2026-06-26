@@ -6,6 +6,7 @@ import com.example.integrationplatform.enums.BusinessIdempotencyStatus;
 import com.example.integrationplatform.enums.WebhookEventStatus;
 import com.example.integrationplatform.repository.BusinessIdempotencyRepository;
 import com.example.integrationplatform.repository.WebhookEventRepository;
+import org.springframework.data.domain.PageRequest;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -48,8 +49,8 @@ public class WorkerProcessingService {
     @Scheduled(fixedDelay = 7000)
     public void processPublishedEvents() {
         List<WebhookEvent> events =
-                webhookEventRepository.findTop50ByStatusOrderByPublishedAtAsc(
-                        WebhookEventStatus.PUBLISHED
+                webhookEventRepository.findProcessableEvents(
+                        WebhookEventStatus.PUBLISHED, LocalDateTime.now(), PageRequest.of(0, 50)
                 );
 
         if (events.isEmpty()) {
@@ -70,6 +71,7 @@ public class WorkerProcessingService {
             // Mark webhook event as PROCESSING
             event.setStatus(WebhookEventStatus.PROCESSING);
             event.setProcessingStartedAt(LocalDateTime.now());
+            event.setNextRetryAt(null);
             event.setUpdatedAt(LocalDateTime.now());
             webhookEventRepository.save(event);
 
@@ -141,15 +143,21 @@ public class WorkerProcessingService {
             BusinessIdempotency businessIdempotency,
             Exception ex
     ) {
-        int retryCount = event.getProcessingRetryCount() + 1;
+        int currentRetryCount = event.getProcessingRetryCount() == null
+                ? 0
+                : event.getProcessingRetryCount();
+
+        int retryCount = currentRetryCount + 1;
 
         event.setProcessingRetryCount(retryCount);
         event.setProcessingLastError(ex.getMessage());
+        event.setProcessingStartedAt(null);
         event.setUpdatedAt(LocalDateTime.now());
 
         if (retryCount >= MAX_PROCESSING_RETRY) {
             event.setStatus(WebhookEventStatus.DLQ);
             event.setDlqReason(ex.getMessage());
+            event.setNextRetryAt(null);
 
             logger.error("Webhook event moved to DLQ. eventId={}, retryCount={}, error={}",
                     event.getEventId(),
@@ -157,7 +165,7 @@ public class WorkerProcessingService {
                     ex.getMessage());
         } else {
             event.setStatus(WebhookEventStatus.PUBLISHED);
-
+            event.setNextRetryAt(event.calculateNextRetryAt(retryCount));
             logger.warn("Webhook event processing failed. Retrying later. eventId={}, retryCount={}, error={}",
                     event.getEventId(),
                     retryCount,
