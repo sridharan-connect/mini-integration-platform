@@ -1,6 +1,6 @@
 # Mini Integration Platform
 
-A backend portfolio project demonstrating reliable webhook ingestion, durable event persistence, outbox-style asynchronous processing, retries, idempotency, DLQ handling, stale-event recovery, and external API processing using Java, Spring Boot, and PostgreSQL.
+A backend portfolio project demonstrating reliable webhook ingestion, durable event persistence, outbox-style asynchronous processing, Kafka producer integration, retries, idempotency, DLQ handling, stale-event recovery, and external API processing using Java, Spring Boot, PostgreSQL, and Kafka.
 
 This project is inspired by integration and workflow automation platforms such as Zapier. The goal is to demonstrate backend patterns commonly used in integration-heavy systems: webhooks, async processing, retries, idempotency, failure recovery, and event-driven workflows.
 
@@ -19,11 +19,14 @@ Implemented so far:
 * Business-level idempotency for processing side effects
 * Retry handling for publish and processing failures
 * Retry backoff using `nextRetryAt`
+* Kafka producer integration for outbox publisher
+* Kafka topic publishing to `webhook.events`
+* Kafka/mock publisher switching using Spring profiles
 * `PUBLISH_FAILED` handling after publish retry limit
 * `DLQ` handling after processing retry limit
 * Manual retry API for failed events
 * Stale `PROCESSING` recovery
-* Mock publisher layer
+* Mock publisher layer for local testing without Kafka
 * Mock external API processing layer
 
 ## Tech Stack
@@ -31,8 +34,10 @@ Implemented so far:
 * Java
 * Spring Boot
 * PostgreSQL
+* Apache Kafka
 * Spring Data JPA
 * Scheduled background workers
+* Docker / Docker Compose
 * Maven
 
 ## High-Level Flow
@@ -53,7 +58,8 @@ PostgreSQL
       v
 Scheduled Outbox Publisher
       |
-      | publish event
+      | publish event to Kafka topic / mock publisher
+      | mark PUBLISHED only after publish succeeds
       v
 PUBLISHED
       |
@@ -185,6 +191,43 @@ Webhook event status controls workflow.
 Business idempotency controls duplicate side effects.
 ```
 
+## Kafka Producer Support
+
+The outbox publisher supports Kafka producer integration.
+
+Default topic:
+
+```text
+webhook.events
+```
+
+Publishing flow:
+
+```text
+PENDING_PUBLISH
+      |
+      | Kafka publish succeeds
+      v
+PUBLISHED
+```
+
+The event is marked `PUBLISHED` only after Kafka publish succeeds. If Kafka is unavailable, the existing retry mechanism records the error, increments retry count, sets `nextRetryAt`, and retries later. After the max retry limit, the event moves to `PUBLISH_FAILED`.
+
+For local development, the project supports two publisher modes:
+
+```text
+Default mode          -> KafkaEventPublisherService
+mock-publisher profile -> MockEventPublisherService
+```
+
+Run without Kafka using mock publisher mode:
+
+```bash
+SPRING_PROFILES_ACTIVE=mock-publisher mvn spring-boot:run
+```
+
+Kafka local setup and useful topic/consumer commands are documented in `KAFKA_SETUP.md`.
+
 ## Manual Retry API
 
 Manual retry is supported for failed webhook events.
@@ -244,6 +287,23 @@ Content-Type: application/json
 }
 ```
 
+## Local Kafka / Mock Publisher Modes
+
+For Kafka mode, start Kafka using Docker Compose and run the application normally:
+
+```bash
+docker compose up -d
+mvn spring-boot:run
+```
+
+For mock mode, Kafka is not required:
+
+```bash
+SPRING_PROFILES_ACTIVE=mock-publisher mvn spring-boot:run
+```
+
+Use Kafka mode to verify real topic publishing. Use mock mode for quick local testing without Kafka.
+
 ## Design Decisions
 
 ### Persist before processing
@@ -253,6 +313,10 @@ The webhook API first stores the event durably before any asynchronous processin
 ### Do not publish in the request thread
 
 Publishing directly inside the webhook request can increase latency and tightly couple the API to downstream failures.
+
+### Mark PUBLISHED only after Kafka acknowledgement
+
+The outbox publisher marks an event as `PUBLISHED` only after Kafka publish succeeds. If Kafka publish fails, the event remains retryable through the existing retry/backoff flow.
 
 ### Use status-based workflow
 
@@ -278,7 +342,7 @@ Business idempotency protects external side effects from duplicate execution.
 
 Planned improvements:
 
-* Kafka producer integration
+* Kafka consumer integration
 * Dedicated DLQ table
 * Real external API integration
 * Webhook signature validation improvements
@@ -294,6 +358,7 @@ This project demonstrates backend engineering concepts commonly used in integrat
 * Webhook ingestion
 * Durable event persistence
 * Outbox pattern
+* Kafka producer integration
 * Asynchronous processing
 * Retry handling
 * Retry backoff using `nextRetryAt`
